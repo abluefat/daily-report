@@ -7,7 +7,7 @@ from PySide6.QtWidgets import (
     QHeaderView, QAbstractItemView, QDialog, QDialogButtonBox
 )
 from PySide6.QtCore import QDate, Qt, Signal
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtGui import QFont, QIcon, QColor
 from database import Database
 import datetime
 
@@ -202,8 +202,8 @@ class DailyReportApp(QMainWindow):
 
                 # 状态列着色
                 if col_idx == 5 and item_text in status_colors:
-                    item.setForeground(Qt.white)
-                    item.setBackground(Qt.GlobalColor(status_colors[item_text].replace("#", "0x")))
+                    item.setForeground(QColor("white"))
+                    item.setBackground(QColor(status_colors[item_text]))
                     item.setTextAlignment(Qt.AlignCenter)
 
                 # ID和耗时列居中
