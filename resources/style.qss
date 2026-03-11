@@ -1,0 +1,52 @@
+/* 深色科技风 - 专为日报系统优化 */
+QWidget {
+    background-color: #2d2d30;
+    color: #ffffff;
+    font-family: "Microsoft YaHei", "Segoe UI";
+    font-size: 10pt;
+}
+QLineEdit, QTextEdit, QComboBox, QDateEdit {
+    background-color: #3c3c40;
+    border: 1px solid #555555;
+    border-radius: 4px;
+    padding: 5px;
+    color: #e0e0e0;
+}
+QLineEdit:focus, QTextEdit:focus {
+    border: 1.5px solid #4da6ff;
+}
+QPushButton {
+    background-color: #0d6efd;
+    color: white;
+    border: none;
+    border-radius: 4px;
+    padding: 8px 16px;
+    font-weight: bold;
+}
+QPushButton:hover {
+    background-color: #0b5ed7;
+}
+QPushButton:pressed {
+    background-color: #0a58ca;
+}
+QPushButton#export_btn {
+    background-color: #20c997;
+}
+QPushButton#export_btn:hover {
+    background-color: #1ba97f;
+}
+QTableWidget {
+    background-color: #3c3c40;
+    gridline-color: #555555;
+    alternate-background-color: #353538;
+}
+QHeaderView::section {
+    background-color: #1e1e1e;
+    color: #4da6ff;
+    padding: 8px;
+    border: none;
+    font-weight: bold;
+}
+QMessageBox {
+    background-color: #2d2d30;
+}
