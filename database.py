@@ -1,23 +1,104 @@
+# database.py - 增强版数据库（支持分组/搜索/推荐）
 import sqlite3
-from pathlib import Path
 from datetime import datetime
 import os
 
 
 class Database:
-    def __init__(self):
-        # ✅ 智能路径处理（自动转义#号/空格/中文）
-        app_data = Path.home() / "AppData" / "Roaming" / "DailyReport"
-        app_data.mkdir(parents=True, exist_ok=True)
-        self.db_path = app_data / "dailydata.db"
+    def __init__(self, db_path="projects.db"):
+        self.db_path = db_path
         self.init_db()
-        print(f"✅ 数据库就绪 | 路径: {self.db_path}")
 
     def init_db(self):
-        """初始化数据库表"""
+        """初始化增强版数据库结构"""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        # 任务表
+
+        # 分组表
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS project_groups
+                       (
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           name
+                           TEXT
+                           NOT
+                           NULL
+                           UNIQUE,
+                           parent_id
+                           INTEGER,
+                           icon
+                           TEXT
+                           DEFAULT
+                           '📁',
+                           sort_order
+                           INTEGER
+                           DEFAULT
+                           0,
+                           FOREIGN
+                           KEY
+                       (
+                           parent_id
+                       ) REFERENCES project_groups
+                       (
+                           id
+                       )
+                           )
+                       ''')
+
+        # 项目表
+        cursor.execute('''
+                       CREATE TABLE IF NOT EXISTS projects
+                       (
+                           id
+                           INTEGER
+                           PRIMARY
+                           KEY
+                           AUTOINCREMENT,
+                           name
+                           TEXT
+                           NOT
+                           NULL
+                           UNIQUE,
+                           group_id
+                           INTEGER,
+                           icon
+                           TEXT
+                           DEFAULT
+                           '📌',
+                           is_common
+                           BOOLEAN
+                           DEFAULT
+                           0,
+                           usage_count
+                           INTEGER
+                           DEFAULT
+                           0,
+                           last_used
+                           TIMESTAMP,
+                           created_at
+                           TIMESTAMP
+                           DEFAULT
+                           CURRENT_TIMESTAMP,
+                           updated_at
+                           TIMESTAMP
+                           DEFAULT
+                           CURRENT_TIMESTAMP,
+                           FOREIGN
+                           KEY
+                       (
+                           group_id
+                       ) REFERENCES project_groups
+                       (
+                           id
+                       )
+                           )
+                       ''')
+
+        # 日报表
         cursor.execute('''
                        CREATE TABLE IF NOT EXISTS daily_reports
                        (
@@ -26,170 +107,284 @@ class Database:
                            PRIMARY
                            KEY
                            AUTOINCREMENT,
-                           report_date
+                           date
                            TEXT
                            NOT
                            NULL,
-                           project
-                           TEXT,
+                           project_id
+                           INTEGER,
                            task_content
                            TEXT
                            NOT
                            NULL,
                            hours
-                           REAL,
+                           REAL
+                           NOT
+                           NULL,
                            status
                            TEXT
-                           DEFAULT
-                           '进行中',
+                           NOT
+                           NULL,
                            notes
                            TEXT,
-                           created_time
-                           DATETIME
+                           created_at
+                           TIMESTAMP
                            DEFAULT
-                           CURRENT_TIMESTAMP
+                           CURRENT_TIMESTAMP,
+                           FOREIGN
+                           KEY
+                       (
+                           project_id
+                       ) REFERENCES projects
+                       (
+                           id
                        )
+                           )
                        ''')
-        # 创建索引提升查询速度
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_date ON daily_reports(report_date)')
-        cursor.execute('CREATE INDEX IF NOT EXISTS idx_status ON daily_reports(status)')
+
+        # 初始化默认分组（避免空状态）
+        cursor.execute("SELECT COUNT(*) FROM project_groups")
+        if cursor.fetchone()[0] == 0:
+            default_groups = [
+                (1, "客户项目", None, "🏢", 1),
+                (2, "内部项目", None, "🔧", 2),
+                (3, "研发项目", 1, "💻", 3),
+                (4, "运维项目", 1, "⚙️", 4),
+                (5, "行政事务", 2, "📋", 5),
+                (6, "市场活动", 2, "📣", 6)
+            ]
+            cursor.executemany(
+                "INSERT INTO project_groups (id, name, parent_id, icon, sort_order) VALUES (?, ?, ?, ?, ?)",
+                default_groups
+            )
+
+        # 初始化默认项目
+        cursor.execute("SELECT COUNT(*) FROM projects")
+        if cursor.fetchone()[0] == 0:
+            default_projects = [
+                ("客户系统升级", 1, "🚀", 1, 5),
+                ("内部工具开发", 2, "🛠️", 1, 8),
+                ("需求评审", 3, "📝", 0, 3),
+                ("Bug修复", 4, "🐞", 1, 12),
+                ("周报整理", 5, "📊", 0, 2),
+                ("产品发布会", 6, "🎤", 1, 4)
+            ]
+            cursor.executemany(
+                "INSERT INTO projects (name, group_id, icon, is_common, usage_count) VALUES (?, ?, ?, ?, ?)",
+                default_projects
+            )
+
         conn.commit()
         conn.close()
 
-    # ========== CRUD 操作 ==========
-    def save_report(self, date, project, task, hours, status, notes):
-        """保存新日报"""
+    # ========== 项目管理 ==========
+    def get_projects(self, group_id=None, search_text=""):
+        """获取项目列表（支持分组过滤+搜索）"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        query = """
+                SELECT p.id, p.name, p.icon, p.is_common, p.usage_count, g.name as group_name
+                FROM projects p
+                         LEFT JOIN project_groups g ON p.group_id = g.id
+                WHERE 1 = 1 \
+                """
+        params = []
+
+        if group_id:
+            query += " AND p.group_id = ?"
+            params.append(group_id)
+
+        if search_text:
+            query += " AND (p.name LIKE ? OR g.name LIKE ?)"
+            like_text = f"%{search_text}%"
+            params.extend([like_text, like_text])
+
+        query += " ORDER BY p.is_common DESC, p.usage_count DESC, p.name"
+        cursor.execute(query, params)
+        projects = cursor.fetchall()
+        conn.close()
+        return projects
+
+    def get_common_projects(self, limit=5):
+        """获取常用项目（按使用频率排序）"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+                       SELECT id, name, icon
+                       FROM projects
+                       WHERE is_common = 1
+                          OR usage_count > 0
+                       ORDER BY is_common DESC, usage_count DESC, last_used DESC LIMIT ?
+                       """, (limit,))
+        projects = cursor.fetchall()
+        conn.close()
+        return projects
+
+    def increment_usage(self, project_id):
+        """增加项目使用计数"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+                       UPDATE projects
+                       SET usage_count = usage_count + 1,
+                           last_used   = CURRENT_TIMESTAMP
+                       WHERE id = ?
+                       """, (project_id,))
+        conn.commit()
+        conn.close()
+
+    def get_project_by_id(self, project_id):
+        """根据ID获取项目名称"""
+        if not project_id:
+            return "其他"
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("SELECT name FROM projects WHERE id = ?", (project_id,))
+        result = cursor.fetchone()
+        conn.close()
+        return result[0] if result else "未知项目"
+
+    # ========== 分组管理 ==========
+    def get_groups_tree(self):
+        """获取分组树形结构"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+                       SELECT id, name, parent_id, icon, sort_order
+                       FROM project_groups
+                       ORDER BY sort_order, name
+                       """)
+        groups = cursor.fetchall()
+        conn.close()
+        return self._build_tree(groups)
+
+    def _build_tree(self, groups):
+        """构建树形结构"""
+        tree = []
+        group_dict = {g[0]: {"id": g[0], "name": g[1], "parent_id": g[2], "icon": g[3], "children": []} for g in groups}
+
+        for group in groups:
+            if group[2] is None:  # 顶级分组
+                tree.append(group_dict[group[0]])
+            else:
+                parent = group_dict.get(group[2])
+                if parent:
+                    parent["children"].append(group_dict[group[0]])
+        return tree
+
+    # ========== 项目CRUD ==========
+    def add_project(self, name, group_id=None, icon="📌", is_common=False):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
             cursor.execute(
-                "INSERT INTO daily_reports (report_date, project, task_content, hours, status, notes) VALUES (?, ?, ?, ?, ?, ?)",
-                (date, project, task, hours, status, notes)
+                "INSERT INTO projects (name, group_id, icon, is_common) VALUES (?, ?, ?, ?)",
+                (name, group_id, icon, 1 if is_common else 0)
             )
             conn.commit()
-            report_id = cursor.lastrowid
+            return True
+        except sqlite3.IntegrityError:
+            return False
+        finally:
             conn.close()
-            return True, report_id
-        except Exception as e:
-            return False, str(e)
 
-    def get_all_reports(self, limit=100):
-        """获取所有日报（按时间倒序）"""
+    def update_project(self, project_id, name=None, group_id=None, icon=None, is_common=None):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("""
-                       SELECT id,
-                              report_date,
-                              project,
-                              task_content,
-                              hours,
-                              status,
-                              notes,
-                              created_time
-                       FROM daily_reports
-                       ORDER BY created_time DESC LIMIT ?
-                       """, (limit,))
-        rows = cursor.fetchall()
-        conn.close()
-        return rows
+        updates = []
+        params = []
 
-    def get_reports_by_date(self, start_date, end_date):
-        """按日期范围查询"""
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if group_id is not None:
+            updates.append("group_id = ?")
+            params.append(group_id)
+        if icon is not None:
+            updates.append("icon = ?")
+            params.append(icon)
+        if is_common is not None:
+            updates.append("is_common = ?")
+            params.append(1 if is_common else 0)
+
+        if updates:
+            params.append(project_id)
+            cursor.execute(f"UPDATE projects SET {', '.join(updates)}, updated_at=CURRENT_TIMESTAMP WHERE id = ?",
+                           params)
+            conn.commit()
+        conn.close()
+        return True
+
+    def delete_project(self, project_id):
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
-        cursor.execute("""
-                       SELECT id,
-                              report_date,
-                              project,
-                              task_content,
-                              hours,
-                              status,
-                              notes,
-                              created_time
-                       FROM daily_reports
-                       WHERE report_date BETWEEN ? AND ?
-                       ORDER BY report_date DESC
-                       """, (start_date, end_date))
-        rows = cursor.fetchall()
+        cursor.execute("SELECT COUNT(*) FROM daily_reports WHERE project_id = ?", (project_id,))
+        if cursor.fetchone()[0] > 0:
+            conn.close()
+            return False
+        cursor.execute("DELETE FROM projects WHERE id = ?", (project_id,))
+        conn.commit()
         conn.close()
-        return rows
+        return True
 
-    def update_report(self, report_id, date, project, task, hours, status, notes):
-        """更新日报"""
+    # ========== 分组CRUD ==========
+    def add_group(self, name, parent_id=None, icon="📁", sort_order=0):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
         try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("""
-                           UPDATE daily_reports
-                           SET report_date=?,
-                               project=?,
-                               task_content=?,
-                               hours=?,
-                               status=?,
-                               notes=?
-                           WHERE id = ?
-                           """, (date, project, task, hours, status, notes, report_id))
+            cursor.execute(
+                "INSERT INTO project_groups (name, parent_id, icon, sort_order) VALUES (?, ?, ?, ?)",
+                (name, parent_id, icon, sort_order)
+            )
             conn.commit()
-            conn.close()
             return True
-        except Exception as e:
-            return False, str(e)
+        except sqlite3.IntegrityError:
+            return False
+        finally:
+            conn.close()
 
-    def delete_report(self, report_id):
-        """删除日报"""
-        try:
-            conn = sqlite3.connect(self.db_path)
-            cursor = conn.cursor()
-            cursor.execute("DELETE FROM daily_reports WHERE id=?", (report_id,))
+    def update_group(self, group_id, name=None, parent_id=None, icon=None, sort_order=None):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        updates = []
+        params = []
+
+        if name is not None:
+            updates.append("name = ?")
+            params.append(name)
+        if parent_id is not None:
+            updates.append("parent_id = ?")
+            params.append(parent_id)
+        if icon is not None:
+            updates.append("icon = ?")
+            params.append(icon)
+        if sort_order is not None:
+            updates.append("sort_order = ?")
+            params.append(sort_order)
+
+        if updates:
+            params.append(group_id)
+            cursor.execute(f"UPDATE project_groups SET {', '.join(updates)} WHERE id = ?", params)
             conn.commit()
+        conn.close()
+        return True
+
+    def delete_group(self, group_id):
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        # 检查是否有子分组或项目
+        cursor.execute("SELECT COUNT(*) FROM project_groups WHERE parent_id = ?", (group_id,))
+        if cursor.fetchone()[0] > 0:
             conn.close()
-            return True
-        except Exception as e:
-            return False, str(e)
+            return False, "该分组下存在子分组，无法删除"
 
-    def export_to_excel(self, rows, output_path):
-        """导出到Excel（含格式）"""
-        try:
-            import openpyxl
-            from openpyxl.styles import Font, Alignment, PatternFill
+        cursor.execute("SELECT COUNT(*) FROM projects WHERE group_id = ?", (group_id,))
+        if cursor.fetchone()[0] > 0:
+            conn.close()
+            return False, "该分组下存在项目，无法删除"
 
-            wb = openpyxl.Workbook()
-            ws = wb.active
-            ws.title = "工作日报"
-
-            # 表头
-            headers = ["ID", "日期", "项目", "任务内容", "耗时(小时)", "状态", "备注", "创建时间"]
-            ws.append(headers)
-
-            # 样式
-            header_fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")
-            header_font = Font(bold=True, color="FFFFFF")
-            for cell in ws[1]:
-                cell.fill = header_fill
-                cell.font = header_font
-                cell.alignment = Alignment(horizontal="center")
-
-            # 数据
-            for row in rows:
-                # 转换时间格式
-                created_time = row[7]
-                if created_time:
-                    try:
-                        created_time = datetime.strptime(created_time, "%Y-%m-%d %H:%M:%S").strftime("%Y-%m-%d %H:%M")
-                    except:
-                        pass
-                ws.append([
-                    row[0], row[1], row[2], row[3],
-                    f"{row[4]:.1f}" if row[4] else "",
-                    row[5], row[6], created_time
-                ])
-
-            # 列宽优化
-            col_widths = [6, 12, 15, 40, 10, 10, 20, 18]
-            for i, width in enumerate(col_widths, start=1):
-                ws.column_dimensions[openpyxl.utils.get_column_letter(i)].width = width
-
-            wb.save(output_path)
-            return True, None
-        except Exception as e:
-            return False, str(e)
+        cursor.execute("DELETE FROM project_groups WHERE id = ?", (group_id,))
+        conn.commit()
+        conn.close()
+        return True, "删除成功"

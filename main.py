@@ -1,343 +1,405 @@
+# main.py - 完整增强版日报系统
 import sys
-import os
+import sqlite3
+from datetime import datetime
 from PySide6.QtWidgets import (
-    QApplication, QMainWindow, QWidget, QVBoxLayout, QHBoxLayout,
-    QLabel, QLineEdit, QTextEdit, QPushButton, QComboBox, QDateEdit,
-    QTableWidget, QTableWidgetItem, QMessageBox, QFileDialog,
-    QHeaderView, QAbstractItemView, QDialog, QDialogButtonBox
+    QApplication, QWidget, QVBoxLayout, QHBoxLayout, QLabel,
+    QDateEdit, QTextEdit, QDoubleSpinBox, QComboBox, QPushButton,
+    QMessageBox, QLineEdit, QListWidget, QListWidgetItem, QDialog,
+    QFormLayout, QCheckBox, QGridLayout, QDialogButtonBox, QSplitter,
+    QTreeWidget, QTreeWidgetItem, QTableWidget, QTableWidgetItem,
+    QHeaderView, QAbstractItemView
 )
-from PySide6.QtCore import QDate, Qt, Signal
-from PySide6.QtGui import QFont, QIcon, QColor
+from PySide6.QtCore import Qt, QSize
+from PySide6.QtGui import QFont, QColor, QIcon
 from database import Database
-import datetime
+from ProjectDialog import ProjectDialog
 
 
-# 加载样式表（如果存在）
-def load_stylesheet():
-    style_path = os.path.join(os.path.dirname(__file__), "resources", "style.qss")
-    if os.path.exists(style_path):
-        with open(style_path, "r", encoding="utf-8") as f:
-            return f.read()
-    return ""
-
-
-class EditDialog(QDialog):
-    """编辑日报对话框"""
-
-    def __init__(self, report_data=None, parent=None):
-        super().__init__(parent)
-        self.report_data = report_data
-        self.setWindowTitle("✏️ 编辑日报" if report_data else "✏️ 新增日报")
-        self.setModal(True)
-        self.resize(600, 400)
-        self.setup_ui()
-        if report_data:
-            self.load_data(report_data)
-
-    def setup_ui(self):
-        layout = QVBoxLayout()
-
-        # 日期
-        date_layout = QHBoxLayout()
-        date_layout.addWidget(QLabel("📅 日期:"))
-        self.date_edit = QDateEdit()
-        self.date_edit.setDate(QDate.currentDate())
-        date_layout.addWidget(self.date_edit)
-        date_layout.addStretch()
-        layout.addLayout(date_layout)
-
-        # 项目
-        project_layout = QHBoxLayout()
-        project_layout.addWidget(QLabel("📦 项目:"))
-        self.project_combo = QComboBox()
-        self.project_combo.addItems(["客户系统升级", "内部工具开发", "需求评审", "Bug修复", "其他"])
-        project_layout.addWidget(self.project_combo)
-        project_layout.addStretch()
-        layout.addLayout(project_layout)
-
-        # 任务内容
-        layout.addWidget(QLabel("📝 任务内容:"))
-        self.task_edit = QTextEdit()
-        self.task_edit.setPlaceholderText("请输入详细工作内容...")
-        layout.addWidget(self.task_edit)
-
-        # 耗时+状态
-        bottom_layout = QHBoxLayout()
-        bottom_layout.addWidget(QLabel("⏱️ 耗时(小时):"))
-        self.hours_edit = QLineEdit("2.5")
-        bottom_layout.addWidget(self.hours_edit)
-
-        bottom_layout.addWidget(QLabel("  状态:"))
-        self.status_combo = QComboBox()
-        self.status_combo.addItems(["进行中", "已完成", "已延期", "待确认", "已取消"])
-        bottom_layout.addWidget(self.status_combo)
-        bottom_layout.addStretch()
-        layout.addLayout(bottom_layout)
-
-        # 备注
-        layout.addWidget(QLabel("💬 备注:"))
-        self.notes_edit = QLineEdit()
-        layout.addWidget(self.notes_edit)
-
-        # 按钮
-        btn_layout = QHBoxLayout()
-        self.save_btn = QPushButton("💾 保存")
-        self.save_btn.clicked.connect(self.accept)
-        cancel_btn = QPushButton("❌ 取消")
-        cancel_btn.clicked.connect(self.reject)
-        btn_layout.addStretch()
-        btn_layout.addWidget(self.save_btn)
-        btn_layout.addWidget(cancel_btn)
-        layout.addLayout(btn_layout)
-
-        self.setLayout(layout)
-
-    def load_data(self, data):
-        """加载现有数据"""
-        self.date_edit.setDate(QDate.fromString(data[1], "yyyy-MM-dd"))
-        self.project_combo.setCurrentText(data[2] or "")
-        self.task_edit.setPlainText(data[3])
-        self.hours_edit.setText(str(data[4] or "0"))
-        self.status_combo.setCurrentText(data[5])
-        self.notes_edit.setText(data[6] or "")
-
-    def get_data(self):
-        """获取输入数据"""
-        return (
-            self.date_edit.date().toString("yyyy-MM-dd"),
-            self.project_combo.currentText(),
-            self.task_edit.toPlainText().strip(),
-            float(self.hours_edit.text() or 0),
-            self.status_combo.currentText(),
-            self.notes_edit.text().strip()
-        )
-
-
-class DailyReportApp(QMainWindow):
+class DailyReportApp(QWidget):
     def __init__(self):
         super().__init__()
         self.db = Database()
+        self.selected_project_id = None
         self.init_ui()
-        self.load_history()
+        self.load_common_projects()
 
     def init_ui(self):
-        # 窗口设置
-        self.setWindowTitle("📝 智能工作日报系统")
-        self.resize(1100, 750)
+        self.setWindowTitle("📅 智能日报系统 v2.0")
+        self.setGeometry(100, 100, 800, 600)
+        self.setStyleSheet("""
+            QWidget {
+                font-family: "Microsoft YaHei", "Segoe UI", sans-serif;
+                font-size: 14px;
+            }
+            QLabel {
+                font-weight: bold;
+                color: #333;
+            }
+            QPushButton {
+                padding: 8px 15px;
+                border-radius: 4px;
+                background-color: #4CAF50;
+                color: white;
+                border: none;
+            }
+            QPushButton:hover {
+                background-color: #45a049;
+            }
+            QPushButton:pressed {
+                background-color: #3d8b40;
+            }
+            QPushButton#cancelBtn {
+                background-color: #f44336;
+            }
+            QPushButton#cancelBtn:hover {
+                background-color: #e53935;
+            }
+            QPushButton#manageBtn {
+                background-color: #2196F3;
+            }
+            QPushButton#manageBtn:hover {
+                background-color: #1e88e5;
+            }
+            QLineEdit, QTextEdit, QComboBox {
+                padding: 8px;
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: white;
+            }
+            QLineEdit:focus, QTextEdit:focus, QComboBox:focus {
+                border-color: #4CAF50;
+                box-shadow: 0 0 0 2px rgba(76, 175, 80, 0.2);
+            }
+        """)
 
-        # 设置图标（如果存在）
-        icon_path = os.path.join(os.path.dirname(__file__), "resources", "app.ico")
-        if os.path.exists(icon_path):
-            self.setWindowIcon(QIcon(icon_path))
-
-        # 主窗口部件
-        main_widget = QWidget()
         main_layout = QVBoxLayout()
+        main_layout.setSpacing(15)
+        main_layout.setContentsMargins(20, 20, 20, 20)
 
-        # =============== 顶部按钮区 ===============
+        # 标题
+        title_label = QLabel("📝 新增工作日报")
+        title_label.setFont(QFont("Microsoft YaHei", 18, QFont.Bold))
+        title_label.setStyleSheet("color: #1976d2; margin-bottom: 10px;")
+        title_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(title_label)
+
+        # 日期选择
+        date_layout = QHBoxLayout()
+        date_label = QLabel("🗓️ 日期:")
+        date_label.setFixedWidth(80)
+        self.date_edit = QDateEdit()
+        self.date_edit.setDate(datetime.now().date())
+        self.date_edit.setCalendarPopup(True)
+        self.date_edit.setDisplayFormat("yyyy-MM-dd")
+        date_layout.addWidget(date_label)
+        date_layout.addWidget(self.date_edit, 1)
+        main_layout.addLayout(date_layout)
+
+        # 项目选择（增强版）
+        project_layout = QVBoxLayout()
+        project_label = QLabel("📌 项目选择:")
+        project_label.setFont(QFont("Microsoft YaHei", 10, QFont.Bold))
+
+        # 智能搜索框
+        self.project_search = QLineEdit()
+        self.project_search.setPlaceholderText("🔍 搜索项目（输入关键词）...")
+        self.project_search.textChanged.connect(self.filter_projects)
+        self.project_search.setStyleSheet("""
+            QLineEdit {
+                padding: 10px;
+                font-size: 14px;
+                border: 2px solid #e0e0e0;
+            }
+            QLineEdit:focus {
+                border-color: #2196F3;
+            }
+        """)
+
+        # 项目列表
+        self.project_list = QListWidget()
+        self.project_list.setIconSize(QSize(24, 24))
+        self.project_list.itemClicked.connect(self.select_project)
+        self.project_list.setStyleSheet("""
+            QListWidget {
+                border: 1px solid #ddd;
+                border-radius: 4px;
+                background-color: white;
+                font-size: 14px;
+            }
+            QListWidget::item {
+                padding: 10px;
+                border-bottom: 1px solid #f5f5f5;
+            }
+            QListWidget::item:selected {
+                background-color: #e3f2fd;
+                color: #1976d2;
+                font-weight: bold;
+            }
+            QListWidget::item:hover {
+                background-color: #f9f9f9;
+            }
+        """)
+
+        # 按钮区域
         btn_layout = QHBoxLayout()
-        self.add_btn = QPushButton("➕ 新增日报")
-        self.add_btn.clicked.connect(self.add_report)
-        self.edit_btn = QPushButton("✏️ 编辑选中")
-        self.edit_btn.clicked.connect(self.edit_selected)
-        self.delete_btn = QPushButton("🗑️ 删除选中")
-        self.delete_btn.clicked.connect(self.delete_selected)
-        self.export_btn = QPushButton("📤 导出Excel")
-        self.export_btn.clicked.connect(self.export_excel)
-
-        for btn in [self.add_btn, self.edit_btn, self.delete_btn, self.export_btn]:
-            btn.setMinimumHeight(35)
-
-        btn_layout.addWidget(self.add_btn)
-        btn_layout.addWidget(self.edit_btn)
-        btn_layout.addWidget(self.delete_btn)
+        self.manage_btn = QPushButton("📁 项目管理")
+        self.manage_btn.setObjectName("manageBtn")
+        self.manage_btn.clicked.connect(self.open_project_manager)
+        self.clear_btn = QPushButton("↺ 清除选择")
+        self.clear_btn.clicked.connect(self.clear_project_selection)
+        btn_layout.addWidget(self.manage_btn)
         btn_layout.addStretch()
-        btn_layout.addWidget(self.export_btn)
-        main_layout.addLayout(btn_layout)
+        btn_layout.addWidget(self.clear_btn)
 
-        # =============== 历史记录表格 ===============
-        self.history_table = QTableWidget()
-        self.history_table.setColumnCount(8)
-        self.history_table.setHorizontalHeaderLabels(
-            ["ID", "日期", "项目", "任务内容", "耗时", "状态", "备注", "创建时间"]
-        )
-        self.history_table.setSelectionBehavior(QAbstractItemView.SelectRows)
-        self.history_table.setEditTriggers(QAbstractItemView.NoEditTriggers)  # 禁止直接编辑
-        self.history_table.horizontalHeader().setSectionResizeMode(QHeaderView.Interactive)
-        self.history_table.horizontalHeader().setStretchLastSection(True)
-        self.history_table.setColumnWidth(0, 50)  # ID
-        self.history_table.setColumnWidth(1, 100)  # 日期
-        self.history_table.setColumnWidth(2, 120)  # 项目
-        self.history_table.setColumnWidth(3, 350)  # 任务内容
-        self.history_table.setColumnWidth(4, 70)  # 耗时
-        self.history_table.setColumnWidth(5, 80)  # 状态
-        self.history_table.setColumnWidth(6, 150)  # 备注
-        self.history_table.setColumnWidth(7, 150)  # 创建时间
-        main_layout.addWidget(self.history_table)
+        project_layout.addWidget(project_label)
+        project_layout.addWidget(self.project_search)
+        project_layout.addWidget(self.project_list)
+        project_layout.addLayout(btn_layout)
+        main_layout.addLayout(project_layout)
 
-        # 状态栏
-        self.statusBar().showMessage("✅ 系统就绪 | 双击表格行可快速编辑")
+        # 任务内容
+        task_layout = QHBoxLayout()
+        task_label = QLabel("✏️ 任务内容:")
+        task_label.setFixedWidth(80)
+        self.task_text = QTextEdit()
+        self.task_text.setPlaceholderText("请输入详细任务内容（必填）...")
+        self.task_text.setMinimumHeight(100)
+        task_layout.addWidget(task_label)
+        task_layout.addWidget(self.task_text, 1)
+        main_layout.addLayout(task_layout)
 
-        main_widget.setLayout(main_layout)
-        self.setCentralWidget(main_widget)
+        # 耗时和状态
+        hour_status_layout = QHBoxLayout()
 
-        # 双击编辑
-        self.history_table.itemDoubleClicked.connect(self.edit_selected)
+        hour_label = QLabel("⏱️ 耗时(小时):")
+        hour_label.setFixedWidth(100)
+        self.hour_spin = QDoubleSpinBox()
+        self.hour_spin.setRange(0.5, 24)
+        self.hour_spin.setSingleStep(0.5)
+        self.hour_spin.setValue(1.0)
+        self.hour_spin.setFixedWidth(100)
 
-    def load_history(self, rows=None):
-        """加载日报数据到表格"""
-        if rows is None:
-            rows = self.db.get_all_reports(limit=200)
+        status_label = QLabel("📊 状态:")
+        status_label.setFixedWidth(60)
+        self.status_combo = QComboBox()
+        self.status_combo.addItems(["已完成", "进行中", "已延期", "待确认", "已取消"])
+        self.status_combo.setCurrentText("进行中")
 
-        self.history_table.setRowCount(len(rows))
-        status_colors = {
-            "已完成": "#28a745", "进行中": "#ffc107",
-            "已延期": "#dc3545", "待确认": "#17a2b8", "已取消": "#6c757d"
-        }
+        hour_status_layout.addWidget(hour_label)
+        hour_status_layout.addWidget(self.hour_spin)
+        hour_status_layout.addSpacing(20)
+        hour_status_layout.addWidget(status_label)
+        hour_status_layout.addWidget(self.status_combo)
+        hour_status_layout.addStretch()
+        main_layout.addLayout(hour_status_layout)
 
-        for row_idx, row_data in enumerate(rows):
-            for col_idx, value in enumerate(row_data):
-                item_text = str(value) if value is not None else ""
-                item = QTableWidgetItem(item_text)
+        # 备注
+        note_layout = QHBoxLayout()
+        note_label = QLabel("💬 备注:")
+        note_label.setFixedWidth(80)
+        self.note_text = QTextEdit()
+        self.note_text.setPlaceholderText("可选：补充说明、遇到的问题等...")
+        self.note_text.setMaximumHeight(80)
+        note_layout.addWidget(note_label)
+        note_layout.addWidget(self.note_text, 1)
+        main_layout.addLayout(note_layout)
 
-                # 状态列着色
-                if col_idx == 5 and item_text in status_colors:
-                    item.setForeground(QColor("white"))
-                    item.setBackground(QColor(status_colors[item_text]))
-                    item.setTextAlignment(Qt.AlignCenter)
+        # 按钮区域
+        button_layout = QHBoxLayout()
+        self.save_btn = QPushButton("💾 保存日报")
+        self.save_btn.setMinimumHeight(40)
+        self.save_btn.setFont(QFont("Microsoft YaHei", 11, QFont.Bold))
+        self.save_btn.clicked.connect(self.save_report)
 
-                # ID和耗时列居中
-                if col_idx in [0, 4]:
-                    item.setTextAlignment(Qt.AlignCenter)
+        self.cancel_btn = QPushButton("❌ 取消")
+        self.cancel_btn.setObjectName("cancelBtn")
+        self.cancel_btn.setMinimumHeight(40)
+        self.cancel_btn.clicked.connect(self.close)
 
-                self.history_table.setItem(row_idx, col_idx, item)
+        button_layout.addStretch()
+        button_layout.addWidget(self.save_btn, 1)
+        button_layout.addWidget(self.cancel_btn, 1)
+        main_layout.addLayout(button_layout)
 
-        self.statusBar().showMessage(f"✅ 已加载 {len(rows)} 条日报记录")
+        # 底部提示
+        footer_label = QLabel("💡 提示：常用项目会根据使用频率智能推荐 | 项目管理中可设置常用项目")
+        footer_label.setStyleSheet("color: #666; font-size: 12px; margin-top: 10px;")
+        footer_label.setAlignment(Qt.AlignCenter)
+        main_layout.addWidget(footer_label)
 
-    def add_report(self):
-        """新增日报"""
-        dialog = EditDialog(parent=self)
+        self.setLayout(main_layout)
+
+    def load_common_projects(self):
+        """加载常用项目（智能推荐）"""
+        self.project_list.clear()
+
+        # 添加标题
+        title_item = QListWidgetItem("⭐ 常用项目（根据使用频率智能推荐）")
+        title_item.setForeground(QColor("#1976d2"))
+        title_item.setFont(QFont("Microsoft YaHei", 10, QFont.Bold))
+        title_item.setFlags(Qt.NoItemFlags)
+        title_item.setBackground(QColor("#e3f2fd"))
+        title_item.setSizeHint(QSize(0, 30))
+        self.project_list.addItem(title_item)
+
+        # 获取常用项目
+        projects = self.db.get_common_projects(limit=8)
+
+        if not projects:
+            empty_item = QListWidgetItem("📭 暂无常用项目，添加项目后会自动推荐")
+            empty_item.setForeground(QColor("#999"))
+            empty_item.setFlags(Qt.NoItemFlags)
+            self.project_list.addItem(empty_item)
+        else:
+            for pid, name, icon in projects:
+                item = QListWidgetItem(f"  {icon}  {name}")
+                item.setData(Qt.UserRole, pid)
+                item.setToolTip(f"项目ID: {pid}\n点击选择此项目")
+                item.setFont(QFont("Microsoft YaHei", 11))
+                self.project_list.addItem(item)
+
+        # 添加分隔线
+        sep = QListWidgetItem("─" * 50)
+        sep.setFlags(Qt.NoItemFlags)
+        sep.setForeground(QColor("#e0e0e0"))
+        sep.setSizeHint(QSize(0, 10))
+        self.project_list.addItem(sep)
+
+        # 添加提示
+        hint_item = QListWidgetItem("💡 在搜索框输入关键词查找更多项目 | 点击「📁 项目管理」添加新项目")
+        hint_item.setForeground(QColor("#666"))
+        hint_item.setFont(QFont("Microsoft YaHei", 9))
+        hint_item.setFlags(Qt.NoItemFlags)
+        hint_item.setSizeHint(QSize(0, 25))
+        self.project_list.addItem(hint_item)
+
+    def filter_projects(self, text):
+        """实时搜索项目"""
+        if not text.strip():
+            self.load_common_projects()
+            return
+
+        self.project_list.clear()
+
+        # 添加搜索标题
+        title_item = QListWidgetItem(f"🔍 搜索结果：'{text}'")
+        title_item.setForeground(QColor("#d32f2f"))
+        title_item.setFont(QFont("Microsoft YaHei", 10, QFont.Bold))
+        title_item.setFlags(Qt.NoItemFlags)
+        title_item.setBackground(QColor("#ffebee"))
+        title_item.setSizeHint(QSize(0, 30))
+        self.project_list.addItem(title_item)
+
+        # 获取搜索结果
+        projects = self.db.get_projects(search_text=text)
+
+        if not projects:
+            empty_item = QListWidgetItem("📭 未找到匹配的项目")
+            empty_item.setForeground(QColor("#999"))
+            empty_item.setFlags(Qt.NoItemFlags)
+            self.project_list.addItem(empty_item)
+        else:
+            for pid, name, icon, _, _, group_name in projects:
+                display_text = f"  {icon}  {name}"
+                if group_name:
+                    display_text += f"  <{group_name}>"
+                item = QListWidgetItem(display_text)
+                item.setData(Qt.UserRole, pid)
+                item.setToolTip(f"分组: {group_name or '未分组'}\nID: {pid}")
+                item.setFont(QFont("Microsoft YaHei", 11))
+                self.project_list.addItem(item)
+
+    def select_project(self, item):
+        """选择项目"""
+        project_id = item.data(Qt.UserRole)
+        if project_id:
+            self.selected_project_id = project_id
+            # 增加使用计数（用于智能推荐）
+            self.db.increment_usage(project_id)
+            # 高亮显示选中项
+            for i in range(self.project_list.count()):
+                self.project_list.item(i).setBackground(QColor("white"))
+            item.setBackground(QColor("#c8e6c9"))
+            item.setForeground(QColor("#1b5e20"))
+
+    def clear_project_selection(self):
+        """清除项目选择"""
+        self.selected_project_id = None
+        self.project_search.clear()
+        self.load_common_projects()
+        QMessageBox.information(self, "提示", "已清除项目选择")
+
+    def open_project_manager(self):
+        """打开项目管理对话框"""
+        dialog = ProjectDialog(self.db, self)
         if dialog.exec() == QDialog.Accepted:
-            data = dialog.get_data()
-            if not data[2]:  # 任务内容为空
-                QMessageBox.warning(self, "⚠️ 警告", "任务内容不能为空！")
+            # 重新加载项目
+            current_text = self.project_search.text()
+            if current_text:
+                self.filter_projects(current_text)
+            else:
+                self.load_common_projects()
+
+    def save_report(self):
+        """保存日报"""
+        # 获取数据
+        date_str = self.date_edit.date().toString("yyyy-MM-dd")
+        task_content = self.task_text.toPlainText().strip()
+        hours = self.hour_spin.value()
+        status = self.status_combo.currentText()
+        notes = self.note_text.toPlainText().strip()
+
+        # 验证必填项
+        if not task_content:
+            QMessageBox.warning(self, "⚠️ 验证失败", "任务内容不能为空！")
+            return
+
+        if not self.selected_project_id:
+            reply = QMessageBox.question(
+                self, "❓ 项目未选择",
+                "未选择项目，是否继续保存到「其他」类别？",
+                QMessageBox.Yes | QMessageBox.No
+            )
+            if reply == QMessageBox.No:
                 return
 
-            success, result = self.db.save_report(*data)
-            if success:
-                QMessageBox.information(self, "✅ 成功", f"日报保存成功！ID: {result}")
-                self.load_history()
-            else:
-                QMessageBox.critical(self, "❌ 失败", f"保存失败:\n{result}")
-
-    def edit_selected(self):
-        """编辑选中行"""
-        selected = self.history_table.selectedItems()
-        if not selected:
-            QMessageBox.information(self, "💡 提示", "请先选择要编辑的日报行")
-            return
-
-        row = selected[0].row()
-        report_id = int(self.history_table.item(row, 0).text())
-        # 获取完整数据（从数据库）
-        all_reports = self.db.get_all_reports(limit=1000)
-        target_report = None
-        for r in all_reports:
-            if r[0] == report_id:
-                target_report = r
-                break
-
-        if not target_report:
-            QMessageBox.warning(self, "⚠️ 警告", "未找到该日报记录")
-            return
-
-        dialog = EditDialog(report_data=target_report, parent=self)
-        if dialog.exec() == QDialog.Accepted:
-            data = dialog.get_data()
-            if not data[2]:
-                QMessageBox.warning(self, "⚠️ 警告", "任务内容不能为空！")
-                return
-
-            success = self.db.update_report(report_id, *data)
-            if success:
-                QMessageBox.information(self, "✅ 成功", "日报更新成功！")
-                self.load_history()
-            else:
-                QMessageBox.critical(self, "❌ 失败", "更新失败，请重试")
-
-    def delete_selected(self):
-        """删除选中行"""
-        selected = self.history_table.selectedItems()
-        if not selected:
-            QMessageBox.information(self, "💡 提示", "请先选择要删除的日报行")
-            return
-
-        row = selected[0].row()
-        report_id = int(self.history_table.item(row, 0).text())
-        report_date = self.history_table.item(row, 1).text()
-        task_preview = self.history_table.item(row, 3).text()[:20] + "..."
-
-        reply = QMessageBox.question(
-            self, "❓ 确认删除",
-            f"确定要删除以下日报吗？\n\n📅 日期: {report_date}\n📝 任务: {task_preview}",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.No
-        )
-
-        if reply == QMessageBox.Yes:
-            success = self.db.delete_report(report_id)
-            if success:
-                QMessageBox.information(self, "✅ 成功", "日报已删除")
-                self.load_history()
-            else:
-                QMessageBox.critical(self, "❌ 失败", "删除失败，请重试")
-
-    def export_excel(self):
-        """导出Excel"""
-        path, _ = QFileDialog.getSaveFileName(
-            self, "💾 保存Excel",
-            f"工作日报_{datetime.datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx",
-            "Excel Files (*.xlsx)"
-        )
-        if not path:
-            return
-
+        # 保存到数据库
         try:
-            # 获取当前表格数据（避免重新查询）
-            rows = []
-            for row in range(self.history_table.rowCount()):
-                row_data = []
-                for col in range(8):
-                    item = self.history_table.item(row, col)
-                    row_data.append(item.text() if item else "")
-                rows.append(row_data)
+            conn = sqlite3.connect("projects.db")
+            cursor = conn.cursor()
+            cursor.execute('''
+                           INSERT INTO daily_reports (date, project_id, task_content, hours, status, notes)
+                           VALUES (?, ?, ?, ?, ?, ?)
+                           ''', (date_str, self.selected_project_id, task_content, hours, status, notes))
+            conn.commit()
+            conn.close()
 
-            success, error = self.db.export_to_excel(rows, path)
-            if success:
-                QMessageBox.information(
-                    self, "✅ 导出成功",
-                    f"Excel文件已保存！\n📁 {path}\n\n共导出 {len(rows)} 条记录"
-                )
-            else:
-                QMessageBox.critical(self, "❌ 导出失败", f"错误:\n{error}")
+            # 重置表单（保留日期为今天）
+            self.task_text.clear()
+            self.note_text.clear()
+            self.hour_spin.setValue(1.0)
+            self.status_combo.setCurrentText("进行中")
+            self.clear_project_selection()
+
+            QMessageBox.information(
+                self, "✅ 保存成功",
+                f"日报已保存！\n日期：{date_str}\n项目：{self.db.get_project_by_id(self.selected_project_id) if self.selected_project_id else '其他'}\n耗时：{hours}小时"
+            )
+
         except Exception as e:
-            QMessageBox.critical(self, "❌ 错误", f"导出过程出错:\n{str(e)}")
+            QMessageBox.critical(self, "❌ 保存失败", f"发生错误：{str(e)}")
 
 
 if __name__ == "__main__":
-    # 设置环境变量（解决中文路径问题）
-    os.environ["QT_QPA_PLATFORM"] = "windows"
-
     app = QApplication(sys.argv)
 
-    # 设置全局字体（中文友好）
-    font = QFont("Microsoft YaHei", 10)
-    app.setFont(font)
+    # 设置应用属性
+    app.setApplicationName("智能日报系统")
+    app.setOrganizationName("DailyReport")
 
-    # 应用样式表
-    stylesheet = load_stylesheet()
-    if stylesheet:
-        app.setStyleSheet(stylesheet)
-
+    # 创建并显示窗口
     window = DailyReportApp()
     window.show()
+
     sys.exit(app.exec())
