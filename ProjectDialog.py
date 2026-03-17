@@ -1,13 +1,13 @@
 # ProjectDialog.py - 完整项目管理对话框
+import sqlite3
+
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QLabel, QLineEdit, QTreeWidget,
     QTreeWidgetItem, QTableWidget, QTableWidgetItem, QPushButton,
-    QMessageBox, QComboBox, QCheckBox, QGridLayout, QDialogButtonBox,
-    QHeaderView, QListWidget, QListWidgetItem, QSplitter, QAbstractItemView, QWidget, QFormLayout
+    QMessageBox, QComboBox, QCheckBox, QGridLayout, QHeaderView, QSplitter, QAbstractItemView, QWidget, QFormLayout
 )
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont, QColor
-import sqlite3
 
 
 class ProjectDialog(QDialog):

@@ -1,7 +1,5 @@
-# database.py - 增强版数据库（支持分组/搜索/推荐）
+# database.py - 增强版数据库（支持历史查询+导出）
 import sqlite3
-from datetime import datetime
-import os
 
 
 class Database:
@@ -388,3 +386,72 @@ class Database:
         conn.commit()
         conn.close()
         return True, "删除成功"
+
+    # ========== 新增：历史日报查询 ==========
+    def get_reports(self, start_date=None, end_date=None, project_id=None, status=None, keyword=None):
+        """
+        获取日报列表（支持筛选）
+        project_id:
+            None = 不筛选项目
+            "IS_NULL" = 未指定项目（project_id为NULL）
+            整数 = 具体项目ID
+        """
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+
+        query = """
+                SELECT dr.id, \
+                       dr.date, \
+                       dr.task_content, \
+                       dr.hours, \
+                       dr.status, \
+                       dr.notes,
+                       p.name as project_name, \
+                       p.icon as project_icon, \
+                       dr.created_at
+                FROM daily_reports dr
+                         LEFT JOIN projects p ON dr.project_id = p.id
+                WHERE 1 = 1 \
+                """
+        params = []
+
+        if start_date:
+            query += " AND dr.date >= ?"
+            params.append(start_date)
+        if end_date:
+            query += " AND dr.date <= ?"
+            params.append(end_date)
+        if project_id == "IS_NULL":
+            query += " AND dr.project_id IS NULL"
+        elif project_id is not None and project_id != "IS_NULL":
+            query += " AND dr.project_id = ?"
+            params.append(project_id)
+        if status:
+            query += " AND dr.status = ?"
+            params.append(status)
+        if keyword:
+            query += " AND (dr.task_content LIKE ? OR dr.notes LIKE ? OR p.name LIKE ?)"
+            like_keyword = f"%{keyword}%"
+            params.extend([like_keyword, like_keyword, like_keyword])
+
+        query += " ORDER BY dr.date DESC, dr.created_at DESC"
+        cursor.execute(query, params)
+        reports = cursor.fetchall()
+        conn.close()
+        return reports
+
+    def get_all_projects_for_combo(self):
+        """获取所有项目（用于下拉框，包含分组信息）"""
+        conn = sqlite3.connect(self.db_path)
+        cursor = conn.cursor()
+        cursor.execute("""
+                       SELECT p.id, p.name, p.icon, g.name as group_name
+                       FROM projects p
+                                LEFT JOIN project_groups g ON p.group_id = g.id
+                       ORDER BY CASE WHEN g.sort_order IS NULL THEN 999 ELSE g.sort_order END,
+                                g.name,
+                                p.name
+                       """)
+        projects = cursor.fetchall()
+        conn.close()
+        return projects
